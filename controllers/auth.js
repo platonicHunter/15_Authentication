@@ -1,12 +1,12 @@
-
 const crypto = require("crypto");
 //for password
 const bcrypt = require("bcryptjs");
 
 //mail
-const {sendResetEmail} = require("../models/sendMail");
+const { sendResetEmail } = require("../models/sendMail");
 
 const User = require("../models/user");
+const user = require("../models/user");
 
 exports.getLogin = (req, res, next) => {
   const errorMessage = req.flash("error")[0] || null;
@@ -127,7 +127,7 @@ exports.postReset = (req, res, next) => {
     const token = buffer.toString("hex");
 
     User.findOne({ email: email })
-      .then(user => {
+      .then((user) => {
         if (!user) {
           req.flash("errorReset", "No account with that email found.");
           return res.redirect("/reset");
@@ -137,21 +137,20 @@ exports.postReset = (req, res, next) => {
         user.resetToken = token;
         user.resetTokenExpiration = Date.now() + 3600000; // 1 hour in milliseconds
 
-        return user.save()
-          .then(result => {
-            // Send email with reset token
-            const emailSent = sendResetEmail(email, token);
+        return user.save().then((result) => {
+          // Send email with reset token
+          const emailSent = sendResetEmail(email, token);
 
-            if (emailSent) {
-              req.flash("successReset", "Look in your email");
-              return res.redirect("/reset");
-            } else {
-              req.flash("errorReset", "Email not sent.");
-              return res.redirect("/reset");
-            }
-          });
+          if (emailSent) {
+            req.flash("successReset", "Look in your email");
+            return res.redirect("/reset");
+          } else {
+            req.flash("errorReset", "Email not sent.");
+            return res.redirect("/reset");
+          }
+        });
       })
-      .catch(err => {
+      .catch((err) => {
         console.error("Error in password reset:", err);
         req.flash("errorReset", "Something went wrong, please try again.");
         res.redirect("/reset");
@@ -159,16 +158,78 @@ exports.postReset = (req, res, next) => {
   });
 };
 
+exports.getNewPassword = (req, res, next) => {
+  const token = req.params.token;
+  User.findOne({ resetToken: token, resetTokenExpiration: { $gt: Date.now() } })
+    .then((user) => {
+      if (!user) {
+        req.flash(
+          "errorReset",
+          "Password reset token is invalid or has expired."
+        );
+        return res.redirect("/reset");
+      }
 
-//new password
-exports.getNewPassword=(req,res,next)=>{
-  const token =req.params.token;
-  User.findOne({resetToken:token})
+      const errorMessage = req.flash("errorNP")[0] || null;
+      const successMessage = req.flash("successNP")[0] || null;
 
-  const errorMessage = req.flash("errorSign")[0] || null;
-  res.render("auth/new-password", {
-    path: "/new-password",
-    pageTitle: "New Password",
-    errorMessage: errorMessage,
-  });
-}
+      res.render("auth/new-password", {
+        path: "/new-password",
+        pageTitle: "New Password",
+        errorMessage: errorMessage,
+        successMessage: successMessage,
+        userId: user._id.toString(),
+        passwordToken: token,
+      });
+    })
+    .catch((err) => {
+      console.error("Error fetching user with reset token:", err);
+      req.flash("errorReset", "Something went wrong, please try again.");
+      res.redirect("/reset");
+    });
+};
+
+
+exports.postNewPassword = (req, res, next) => {
+  const newPassword = req.body.password;
+  const newConfirmPassword = req.body.confirmPassword;
+  const userId = req.body.userId;
+  const passwordToken = req.body.passwordToken;
+  let resetUser;
+
+  if (newPassword !== newConfirmPassword) {
+    console.log('password not match')
+    req.flash("errorNP", "Passwords do not match.");
+    return res.redirect(`/reset/${passwordToken}`);
+    
+  }
+
+  User.findOne({
+    resetToken: passwordToken,
+    resetTokenExpiration: { $gt: Date.now() },
+    _id: userId,
+  })
+    .then((user) => {
+      if (!user) {
+        req.flash('errorReset', 'Password reset token is invalid or has expired.');
+        return res.redirect('/reset');
+      }
+      resetUser = user;
+      return bcrypt.hash(newPassword, 12);
+    })
+    .then((hashPassword) => {
+      resetUser.password = hashPassword;
+      resetUser.resetToken = undefined;
+      resetUser.resetTokenExpiration = undefined;
+      return resetUser.save();
+    })
+    .then(() => {
+      req.flash("success", "Password changed successfully.");
+      res.redirect('/login');
+    })
+    .catch((err) => {
+      console.log(err);
+      req.flash("errorNP", "Something went wrong, please try again.");
+      res.redirect(`/reset/${passwordToken}`);
+    });
+};
